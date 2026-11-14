@@ -1,1368 +1,698 @@
-import React, { useState, useEffect } from 'react';
-import {
-  Wallet,
-  TrendingUp,
-  Heart,
-  ShieldCheck,
-  Coins,
-  Plus,
-  Minus,
-  ArrowUpRight,
-  Lock,
-  Unlock,
-  Calendar,
-  History,
-  X,
-  Check,
-  RotateCcw,
-  Settings,
-  User,
-  Users,
-  Cloud,
-  CloudOff
-} from 'lucide-react';
-import { initializeApp, getApps } from 'firebase/app';
-import {
-  getFirestore,
-  doc,
-  onSnapshot,
-  setDoc
-} from 'firebase/firestore';
-import {
-  getAuth,
-  signInAnonymously,
-  signInWithCustomToken,
-  onAuthStateChanged
-} from 'firebase/auth';
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>הבנק המשפחתי - אביב ושקד</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700;800&display=swap');
+    body { font-family: 'Rubik', sans-serif; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+  <div id="root"></div>
 
-// =========================================================================
-// הגדרת חיבור Firebase אישי עבור פריסה ב-GitHub / Vercel / Netlify
-// =========================================================================
-const MY_CUSTOM_FIREBASE_CONFIG = {
-  apiKey: "AIzaSyCidsufAj_YTodxVumZq7V1GKmpfMhysZ0",
-  authDomain: "pocket-money-f9e07.firebaseapp.com",
-  projectId: "pocket-money-f9e07",
-  storageBucket: "pocket-money-f9e07.firebasestorage.app",
-  messagingSenderId: "293671775732",
-  appId: "1:293671775732:web:336a9aae201c3c3240dda1",
-  measurementId: "G-RC3W1X1V51"
-};
+  <script type="module">
+    import { initializeApp, getApps } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import { getFirestore, doc, onSnapshot, setDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+    import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
-// Initialize Firebase safely from custom config or global environment
-let db = null;
-let auth = null;
-try {
-  const envConfig =
-    typeof __firebase_config !== 'undefined'
-      ? JSON.parse(__firebase_config)
-      : null;
+    window.__FB_SDK__ = { initializeApp, getApps, getFirestore, doc, onSnapshot, setDoc, getAuth, signInAnonymously, onAuthStateChanged };
+  </script>
 
-  const activeConfig = MY_CUSTOM_FIREBASE_CONFIG.apiKey
-    ? MY_CUSTOM_FIREBASE_CONFIG
-    : envConfig;
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
 
-  if (activeConfig && activeConfig.apiKey) {
-    const app = getApps().length === 0 ? initializeApp(activeConfig) : getApps()[0];
-    db = getFirestore(app);
-    auth = getAuth(app);
-  }
-} catch (err) {
-  console.warn('Cloud sync running in local-fallback mode:', err);
-}
-
-const APP_ID = typeof __app_id !== 'undefined' ? __app_id : 'family-pocket-money';
-const FAMILY_ID_STORAGE_KEY = 'family_pocket_money_sync_code';
-
-// Initial state structure for Aviv and Shaked
-const INITIAL_DATA = {
-  activeChildId: 'aviv',
-  parentPin: '2974',
-  children: {
-    aviv: {
-      name: 'אביב',
-      bucket: {
-        baseAmount: 25,
-        currentAmount: 25,
-        adjustments: []
-      },
-      funds: {
-        available: { balance: 0 },
-        savings: {
-          principal: 0,
-          interest: 0,
-          unlockDate: Date.now() + 90 * 24 * 60 * 60 * 1000
-        },
-        donation: {
-          balance: 0,
-          unlockDate: Date.now() + 90 * 24 * 60 * 60 * 1000
-        }
-      },
-      history: []
-    },
-    shaked: {
-      name: 'שקד',
-      bucket: {
-        baseAmount: 25,
-        currentAmount: 25,
-        adjustments: []
-      },
-      funds: {
-        available: { balance: 0 },
-        savings: {
-          principal: 0,
-          interest: 0,
-          unlockDate: Date.now() + 90 * 24 * 60 * 60 * 1000
-        },
-        donation: {
-          balance: 0,
-          unlockDate: Date.now() + 90 * 24 * 60 * 60 * 1000
-        }
-      },
-      history: []
-    }
-  }
-};
-
-const STORAGE_KEY = 'family_pocket_money_v1';
-
-export default function App() {
-  const [familyCode, setFamilyCode] = useState(() => {
-    return localStorage.getItem(FAMILY_ID_STORAGE_KEY) || 'family-aviv-shaked';
-  });
-  const [cloudConnected, setCloudConnected] = useState(false);
-  const [showSyncModal, setShowSyncModal] = useState(false);
-  const [syncInput, setSyncInput] = useState('');
-  const isRemoteUpdateRef = React.useRef(false);
-
-  const [data, setData] = useState(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && parsed.children && parsed.children.aviv && parsed.children.shaked) {
-          return parsed;
-        }
-      }
-    } catch (e) {
-      console.error('Failed to read localStorage:', e);
-    }
-    return INITIAL_DATA;
-  });
-
-  const [isParentMode, setIsParentMode] = useState(false);
-  const [showPinModal, setShowPinModal] = useState(false);
-  const [pinInput, setPinInput] = useState('');
-  const [pinError, setPinError] = useState(false);
-
-  const [adjModal, setAdjModal] = useState({ open: false, type: 'bonus' });
-  const [adjAmount, setAdjAmount] = useState('5');
-  const [adjReason, setAdjReason] = useState('');
-
-  const [distModalOpen, setDistModalOpen] = useState(false);
-  const [distSplit, setDistSplit] = useState({ available: 12, savings: 10, donation: 3 });
-
-  const [withdrawModal, setWithdrawModal] = useState({
-    open: false,
-    fundKey: 'available',
-    amount: 0
-  });
-
-  const [showSettingsModal, setShowSettingsModal] = useState(false);
-  const [newPinInput, setNewPinInput] = useState('');
-  const [pinSavedMsg, setPinSavedMsg] = useState(false);
-  const [resetStreetInput, setResetStreetInput] = useState('');
-  const [resetErrorMsg, setResetErrorMsg] = useState('');
-
-  // Authenticate and subscribe to real-time Firestore updates
-  useEffect(() => {
-    if (!auth || !db) return;
-
-    let unsubscribeSnapshot = null;
-
-    const initAuth = async () => {
-      try {
-        if (!auth.currentUser) {
-          if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-            await signInWithCustomToken(auth, __initial_auth_token);
-          } else {
-            await signInAnonymously(auth);
-          }
-        }
-      } catch (e) {
-        console.warn('Cloud authentication unavailable, running locally:', e?.message || e);
-        setCloudConnected(false);
-      }
+    const FIREBASE_CONFIG = {
+      apiKey: "AIzaSyCidsufAj_YTodxVumZq7V1GKmpfMhysZ0",
+      authDomain: "pocket-money-f9e07.firebaseapp.com",
+      projectId: "pocket-money-f9e07",
+      storageBucket: "pocket-money-f9e07.firebasestorage.app",
+      messagingSenderId: "293671775732",
+      appId: "1:293671775732:web:336a9aae201c3c3240dda1",
+      measurementId: "G-RC3W1X1V51"
     };
 
-    initAuth();
+    const APP_ID = 'family-pocket-money';
+    const FAMILY_ID_STORAGE_KEY = 'family_pocket_money_sync_code';
+    const STORAGE_KEY = 'family_pocket_money_v1';
 
-    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
-      if (!user) return;
-
-      const cleanCode = (familyCode || 'default-family').trim().toLowerCase();
-      const docRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'families', cleanCode);
-
-      if (unsubscribeSnapshot) {
-        unsubscribeSnapshot();
+    const createInitialData = () => ({
+      activeChildId: 'aviv',
+      parentPin: '2974',
+      children: {
+        aviv: {
+          name: 'אביב',
+          bucket: { baseAmount: 25, currentAmount: 25, adjustments: [] },
+          funds: {
+            available: { balance: 0 },
+            savings: { principal: 0, interest: 0, unlockDate: Date.now() + 90 * 24 * 60 * 60 * 1000 },
+            donation: { balance: 0, unlockDate: Date.now() + 90 * 24 * 60 * 60 * 1000 }
+          },
+          history: []
+        },
+        shaked: {
+          name: 'שקד',
+          bucket: { baseAmount: 25, currentAmount: 25, adjustments: [] },
+          funds: {
+            available: { balance: 0 },
+            savings: { principal: 0, interest: 0, unlockDate: Date.now() + 90 * 24 * 60 * 60 * 1000 },
+            donation: { balance: 0, unlockDate: Date.now() + 90 * 24 * 60 * 60 * 1000 }
+          },
+          history: []
+        }
       }
+    });
 
-      unsubscribeSnapshot = onSnapshot(
-        docRef,
-        (snapshot) => {
-          setCloudConnected(true);
-          if (snapshot.exists()) {
-            const remoteData = snapshot.data();
-            if (remoteData && remoteData.children) {
-              isRemoteUpdateRef.current = true;
-              setData((prev) => ({
-                ...remoteData,
-                activeChildId: prev.activeChildId || remoteData.activeChildId || 'aviv'
-              }));
-              localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteData));
-            }
-          } else {
-            // Initialize cloud document with current local state
-            setDoc(docRef, data, { merge: true }).catch(() => {
-              setCloudConnected(false);
+    function App() {
+      const [familyCode, setFamilyCode] = useState(() => localStorage.getItem(FAMILY_ID_STORAGE_KEY) || 'family-aviv-shaked');
+      const [cloudConnected, setCloudConnected] = useState(false);
+      const [showSyncModal, setShowSyncModal] = useState(false);
+      const [syncInput, setSyncInput] = useState('');
+      const isRemoteUpdateRef = useRef(false);
+      const dbRef = useRef(null);
+      const authRef = useRef(null);
+
+      const [data, setData] = useState(() => {
+        try {
+          const saved = localStorage.getItem(STORAGE_KEY);
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            if (parsed && parsed.children?.aviv && parsed.children?.shaked) return parsed;
+          }
+        } catch (e) {}
+        return createInitialData();
+      });
+
+      const [isParentMode, setIsParentMode] = useState(false);
+      const [showPinModal, setShowPinModal] = useState(false);
+      const [pinInput, setPinInput] = useState('');
+      const [pinError, setPinError] = useState(false);
+
+      const [adjModal, setAdjModal] = useState({ open: false, type: 'bonus' });
+      const [adjAmount, setAdjAmount] = useState('5');
+      const [adjReason, setAdjReason] = useState('');
+
+      const [distModalOpen, setDistModalOpen] = useState(false);
+      const [distSplit, setDistSplit] = useState({ available: 12.5, savings: 10, donation: 2.5 });
+
+      const [withdrawModal, setWithdrawModal] = useState({ open: false, fundKey: 'available', amount: 0 });
+
+      const [showSettingsModal, setShowSettingsModal] = useState(false);
+      const [newPinInput, setNewPinInput] = useState('');
+      const [pinSavedMsg, setPinSavedMsg] = useState(false);
+      const [resetStreetInput, setResetStreetInput] = useState('');
+      const [resetErrorMsg, setResetErrorMsg] = useState('');
+
+      useEffect(() => {
+        let unsubscribeAuth = null;
+        let unsubscribeSnapshot = null;
+
+        const setupFirebase = () => {
+          const sdk = window.__FB_SDK__;
+          if (!sdk) {
+            setTimeout(setupFirebase, 150);
+            return;
+          }
+          try {
+            const app = sdk.getApps().length === 0 ? sdk.initializeApp(FIREBASE_CONFIG) : sdk.getApps()[0];
+            const db = sdk.getFirestore(app);
+            const auth = sdk.getAuth(app);
+            dbRef.current = db;
+            authRef.current = auth;
+
+            sdk.signInAnonymously(auth).catch(() => setCloudConnected(false));
+
+            unsubscribeAuth = sdk.onAuthStateChanged(auth, (user) => {
+              if (!user) return;
+              const cleanCode = (familyCode || 'default-family').trim().toLowerCase();
+              const docRef = sdk.doc(db, 'artifacts', APP_ID, 'public', 'data', 'families', cleanCode);
+              if (unsubscribeSnapshot) unsubscribeSnapshot();
+
+              unsubscribeSnapshot = sdk.onSnapshot(docRef, (snapshot) => {
+                setCloudConnected(true);
+                if (snapshot.exists()) {
+                  const remoteData = snapshot.data();
+                  if (remoteData && remoteData.children) {
+                    isRemoteUpdateRef.current = true;
+                    setData((prev) => ({
+                      ...remoteData,
+                      activeChildId: prev.activeChildId || remoteData.activeChildId || 'aviv'
+                    }));
+                    localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteData));
+                  }
+                } else {
+                  sdk.setDoc(docRef, data, { merge: true }).catch(() => setCloudConnected(false));
+                }
+              }, () => setCloudConnected(false));
             });
+          } catch (e) {
+            setCloudConnected(false);
           }
-        },
-        () => {
-          setCloudConnected(false);
+        };
+
+        setupFirebase();
+        return () => {
+          if (unsubscribeAuth) unsubscribeAuth();
+          if (unsubscribeSnapshot) unsubscribeSnapshot();
+        };
+      }, [familyCode]);
+
+      useEffect(() => {
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        } catch (e) {}
+
+        if (isRemoteUpdateRef.current) {
+          isRemoteUpdateRef.current = false;
+          return;
         }
-      );
-    });
 
-    return () => {
-      unsubscribeAuth();
-      if (unsubscribeSnapshot) unsubscribeSnapshot();
-    };
-  }, [familyCode]);
+        const sdk = window.__FB_SDK__;
+        if (sdk && dbRef.current && authRef.current?.currentUser && cloudConnected) {
+          const cleanCode = (familyCode || 'default-family').trim().toLowerCase();
+          const docRef = sdk.doc(dbRef.current, 'artifacts', APP_ID, 'public', 'data', 'families', cleanCode);
+          sdk.setDoc(docRef, { ...data, updatedAt: Date.now() }, { merge: true }).catch(() => setCloudConnected(false));
+        }
+      }, [data, familyCode, cloudConnected]);
 
-  // Save changes to localStorage and push to Firestore when modified locally
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    } catch (e) {
-      console.error('Failed to save to localStorage:', e);
-    }
+      const activeChildId = data.activeChildId || 'aviv';
+      const activeChild = data.children[activeChildId] || data.children.aviv;
+      const principal = activeChild.funds?.savings?.principal || 0;
+      const interest = activeChild.funds?.savings?.interest || 0;
+      const totalSavingsBalance = principal + interest;
 
-    if (isRemoteUpdateRef.current) {
-      isRemoteUpdateRef.current = false;
-      return;
-    }
+      const now = Date.now();
+      const savingsDaysLeft = Math.max(0, Math.ceil(((activeChild.funds?.savings?.unlockDate || now) - now) / (1000 * 60 * 60 * 24)));
+      const donationDaysLeft = Math.max(0, Math.ceil(((activeChild.funds?.donation?.unlockDate || now) - now) / (1000 * 60 * 60 * 24)));
+      const isSavingsUnlocked = savingsDaysLeft === 0;
+      const isDonationUnlocked = donationDaysLeft === 0;
 
-    if (db && auth && auth.currentUser && cloudConnected) {
-      const cleanCode = (familyCode || 'default-family').trim().toLowerCase();
-      const docRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'families', cleanCode);
-      setDoc(docRef, { ...data, updatedAt: Date.now() }, { merge: true }).catch(() => {
-        setCloudConnected(false);
-      });
-    }
-  }, [data, familyCode, cloudConnected]);
-
-  const handleSaveFamilyCode = (e) => {
-    e.preventDefault();
-    const cleaned = syncInput.trim();
-    if (!cleaned) return;
-    localStorage.setItem(FAMILY_ID_STORAGE_KEY, cleaned);
-    setFamilyCode(cleaned);
-    setShowSyncModal(false);
-  };
-
-  const activeChildId = data.activeChildId || 'aviv';
-  const activeChild = data.children[activeChildId] || data.children.aviv;
-
-  // Derived values for active child
-  const principal = activeChild.funds?.savings?.principal || 0;
-  const interest = activeChild.funds?.savings?.interest || 0;
-  const totalSavingsBalance = principal + interest;
-
-  const now = Date.now();
-  const savingsDaysLeft = Math.max(
-    0,
-    Math.ceil(((activeChild.funds?.savings?.unlockDate || now) - now) / (1000 * 60 * 60 * 24))
-  );
-  const donationDaysLeft = Math.max(
-    0,
-    Math.ceil(((activeChild.funds?.donation?.unlockDate || now) - now) / (1000 * 60 * 60 * 24))
-  );
-
-  const isSavingsUnlocked = savingsDaysLeft === 0;
-  const isDonationUnlocked = donationDaysLeft === 0;
-
-  // Select active child
-  const handleSelectChild = (childId) => {
-    setData((prev) => ({
-      ...prev,
-      activeChildId: childId
-    }));
-  };
-
-  // Parent PIN login
-  const handlePinSubmit = (e) => {
-    e.preventDefault();
-    if (pinInput === (data.parentPin || '2974')) {
-      setIsParentMode(true);
-      setShowPinModal(false);
-      setPinInput('');
-      setPinError(false);
-    } else {
-      setPinError(true);
-    }
-  };
-
-  // Open adjustment modal (bonus / penalty)
-  const openAdjModal = (type) => {
-    setAdjModal({ open: true, type });
-    setAdjAmount('5');
-    setAdjReason('');
-  };
-
-  // Add bonus or penalty to weekly bucket
-  const handleAddAdjustment = (e) => {
-    e.preventDefault();
-    const num = Math.max(1, Math.round(Number(adjAmount) || 0));
-    if (!num) return;
-
-    const delta = adjModal.type === 'bonus' ? num : -num;
-    const reasonText =
-      adjReason.trim() || (adjModal.type === 'bonus' ? 'בונוס התנהגות חיובית' : 'הפחתה על התנהגות');
-
-    setData((prev) => {
-      const child = prev.children[activeChildId];
-      const newBucketAmount = Math.max(0, (child.bucket.currentAmount || 0) + delta);
-      const historyEntry = {
-        id: Date.now().toString(),
-        date: new Date().toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit' }),
-        type: adjModal.type,
-        amount: delta,
-        description: reasonText
+      const handleSelectChild = (childId) => {
+        setData((prev) => ({ ...prev, activeChildId: childId }));
       };
 
-      return {
-        ...prev,
-        children: {
-          ...prev.children,
-          [activeChildId]: {
-            ...child,
-            bucket: {
-              ...child.bucket,
-              currentAmount: newBucketAmount
-            },
-            history: [historyEntry, ...(child.history || [])].slice(0, 30)
-          }
+      const handlePinSubmit = (e) => {
+        e.preventDefault();
+        if (pinInput === (data.parentPin || '2974')) {
+          setIsParentMode(true);
+          setShowPinModal(false);
+          setPinInput('');
+          setPinError(false);
+        } else {
+          setPinError(true);
         }
       };
-    });
 
-    setAdjModal({ open: false, type: 'bonus' });
-  };
+      const handleSaveFamilyCode = (e) => {
+        e.preventDefault();
+        const cleaned = syncInput.trim();
+        if (!cleaned) return;
+        localStorage.setItem(FAMILY_ID_STORAGE_KEY, cleaned);
+        setFamilyCode(cleaned);
+        setShowSyncModal(false);
+      };
 
-  // Open distribution modal with suggested 50 / 40 / 10 split
-  const openDistModal = () => {
-    const total = activeChild.bucket?.currentAmount || 0;
-    const avail = Math.round(total * 0.5);
-    const sav = Math.round(total * 0.4);
-    const don = Math.max(0, total - avail - sav);
-    setDistSplit({ available: avail, savings: sav, donation: don });
-    setDistModalOpen(true);
-  };
+      const handleChangePin = (e) => {
+        e.preventDefault();
+        if (!newPinInput.trim()) return;
+        setData((prev) => ({ ...prev, parentPin: newPinInput.trim() }));
+        setNewPinInput('');
+        setPinSavedMsg(true);
+        setTimeout(() => setPinSavedMsg(false), 2500);
+      };
 
-  // Confirm distribution from weekly bucket to the 3 funds + weekly 8% compound interest
-  const handleConfirmDistribution = (e) => {
-    e.preventDefault();
-    const totalBucket = activeChild.bucket?.currentAmount || 0;
-    const avail = Math.max(0, Math.round(Number(distSplit.available) || 0));
-    const sav = Math.max(0, Math.round(Number(distSplit.savings) || 0));
-    const don = Math.max(0, Math.round(Number(distSplit.donation) || 0));
+      const handleSecureReset = (e) => {
+        e.preventDefault();
+        const normalized = resetStreetInput.trim().replace(/^רחוב\s+/, '');
+        if (normalized !== 'הקליר') {
+          setResetErrorMsg('שם הרחוב שגוי. לא ניתן לאפס את הנתונים.');
+          return;
+        }
+        const currentPin = data.parentPin || '2974';
+        const fresh = createInitialData();
+        fresh.parentPin = currentPin;
+        setData(fresh);
+        setResetStreetInput('');
+        setResetErrorMsg('');
+        setShowSettingsModal(false);
+      };
 
-    if (avail + sav + don !== totalBucket) return;
+      const openAdjustmentModal = (type) => {
+        setAdjModal({ open: true, type });
+        setAdjAmount('5');
+        setAdjReason('');
+      };
 
-    setData((prev) => {
-      const child = prev.children[activeChildId];
-      const currentPrincipal = child.funds.savings.principal || 0;
-      const currentInterest = child.funds.savings.interest || 0;
+      const handleAddAdjustment = (e) => {
+        e.preventDefault();
+        const val = parseFloat(adjAmount);
+        if (isNaN(val) || val <= 0) return;
+        const delta = adjModal.type === 'bonus' ? val : -val;
+        const label = adjReason.trim() || (adjModal.type === 'bonus' ? 'בונוס התנהגות חיובית' : 'הפחתה');
 
-      // Add new deposit to principal
-      const updatedPrincipal = currentPrincipal + sav;
-      // Calculate 8% weekly compound interest on total balance (rounded to nearest shekel)
-      const weeklyInterest = Math.round((updatedPrincipal + currentInterest) * 0.08);
-      const updatedInterest = currentInterest + weeklyInterest;
-
-      const newHistory = [...(child.history || [])];
-      const dateStr = new Date().toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit' });
-
-      if (weeklyInterest > 0) {
-        newHistory.unshift({
-          id: `${Date.now()}-int`,
-          date: dateStr,
-          type: 'interest',
-          amount: weeklyInterest,
-          description: 'ריבית שבועית (8%) בקופת החלומות'
-        });
-      }
-
-      newHistory.unshift({
-        id: `${Date.now()}-dist`,
-        date: dateStr,
-        type: 'distribution',
-        amount: totalBucket,
-        description: `חלוקה: ${avail} ₪ לארנק, ${sav} ₪ לחלומות, ${don} ₪ למעשים טובים`
-      });
-
-      return {
-        ...prev,
-        children: {
-          ...prev.children,
-          [activeChildId]: {
-            ...child,
-            bucket: {
-              ...child.bucket,
-              currentAmount: 25,
-              adjustments: []
-            },
-            funds: {
-              available: {
-                balance: (child.funds.available.balance || 0) + avail
-              },
-              savings: {
-                ...child.funds.savings,
-                principal: updatedPrincipal,
-                interest: updatedInterest
-              },
-              donation: {
-                ...child.funds.donation,
-                balance: (child.funds.donation.balance || 0) + don
+        setData((prev) => {
+          const child = prev.children[activeChildId];
+          const newCurrent = Math.max(0, +(child.bucket.currentAmount + delta).toFixed(2));
+          return {
+            ...prev,
+            children: {
+              ...prev.children,
+              [activeChildId]: {
+                ...child,
+                bucket: {
+                  ...child.bucket,
+                  currentAmount: newCurrent,
+                  adjustments: [{ id: Date.now(), delta, reason: label }, ...child.bucket.adjustments]
+                },
+                history: [{ id: Date.now(), date: new Date().toLocaleDateString('he-IL'), text: `${label} (${delta > 0 ? '+' : ''}${delta} ₪)` }, ...child.history]
               }
-            },
-            history: newHistory.slice(0, 30)
+            }
+          };
+        });
+        setAdjModal({ open: false, type: 'bonus' });
+      };
+
+      const openDistributeModal = () => {
+        const total = activeChild.bucket.currentAmount;
+        const avail = +(total * 0.5).toFixed(2);
+        const sav = +(total * 0.4).toFixed(2);
+        const don = +(total - avail - sav).toFixed(2);
+        setDistSplit({ available: avail, savings: sav, donation: don });
+        setDistModalOpen(true);
+      };
+
+      const handleDistribute = (e) => {
+        e.preventDefault();
+        const total = activeChild.bucket.currentAmount;
+        const sum = +(distSplit.available + distSplit.savings + distSplit.donation).toFixed(2);
+        if (Math.abs(sum - total) > 0.05) return;
+
+        setData((prev) => {
+          const child = prev.children[activeChildId];
+          const prevPrin = child.funds.savings.principal;
+          const prevInt = child.funds.savings.interest;
+          const prevTotalSav = prevPrin + prevInt;
+          const weeklyInterest = +(prevTotalSav * 0.08).toFixed(2);
+
+          return {
+            ...prev,
+            children: {
+              ...prev.children,
+              [activeChildId]: {
+                ...child,
+                bucket: { baseAmount: 25, currentAmount: 25, adjustments: [] },
+                funds: {
+                  ...child.funds,
+                  available: { balance: +(child.funds.available.balance + distSplit.available).toFixed(2) },
+                  savings: {
+                    ...child.funds.savings,
+                    principal: +(prevPrin + distSplit.savings).toFixed(2),
+                    interest: +(prevInt + weeklyInterest).toFixed(2)
+                  },
+                  donation: {
+                    ...child.funds.donation,
+                    balance: +(child.funds.donation.balance + distSplit.donation).toFixed(2)
+                  }
+                },
+                history: [
+                  {
+                    id: Date.now(),
+                    date: new Date().toLocaleDateString('he-IL'),
+                    text: `חלוקה שבועית: ${distSplit.available}₪ זמין, ${distSplit.savings}₪ חיסכון (+${weeklyInterest}₪ ריבית), ${distSplit.donation}₪ תרומה`
+                  },
+                  ...child.history
+                ]
+              }
+            }
+          };
+        });
+        setDistModalOpen(false);
+      };
+
+      const handleConfirmWithdraw = () => {
+        const { fundKey } = withdrawModal;
+        setData((prev) => {
+          const child = prev.children[activeChildId];
+          const updatedFunds = { ...child.funds };
+          let logText = '';
+
+          if (fundKey === 'available') {
+            logText = `משיכה מהקופה הזמינה: ${child.funds.available.balance} ₪`;
+            updatedFunds.available = { balance: 0 };
+          } else if (fundKey === 'savings') {
+            if (isSavingsUnlocked) {
+              logText = `משיכת חיסכון מלאה (קרן + ריבית): ${totalSavingsBalance} ₪`;
+            } else {
+              logText = `שבירת חיסכון מוקדמת: נמשכו ${principal} ₪ קרן (בוטלו ${interest} ₪ ריבית)`;
+            }
+            updatedFunds.savings = { principal: 0, interest: 0, unlockDate: Date.now() + 90 * 24 * 60 * 60 * 1000 };
+          } else if (fundKey === 'donation') {
+            logText = `משיכה מקופת תרומה: ${child.funds.donation.balance} ₪`;
+            updatedFunds.donation = { balance: 0, unlockDate: Date.now() + 90 * 24 * 60 * 60 * 1000 };
           }
-        }
-      };
-    });
 
-    setDistModalOpen(false);
-  };
-
-  // Open withdraw / donate modal
-  const openWithdrawModal = (fundKey) => {
-    let maxBal = 0;
-    if (fundKey === 'available') maxBal = activeChild.funds.available.balance || 0;
-    if (fundKey === 'savings') maxBal = totalSavingsBalance;
-    if (fundKey === 'donation') maxBal = activeChild.funds.donation.balance || 0;
-
-    setWithdrawModal({
-      open: true,
-      fundKey,
-      amount: maxBal
-    });
-  };
-
-  // Execute withdraw / transfer / donation
-  const handleConfirmWithdraw = (e) => {
-    e.preventDefault();
-    const { fundKey, amount } = withdrawModal;
-    const num = Math.max(0, Math.round(Number(amount) || 0));
-
-    setData((prev) => {
-      const child = prev.children[activeChildId];
-      const dateStr = new Date().toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit' });
-      const updatedFunds = { ...child.funds };
-      let logDesc = '';
-
-      if (fundKey === 'available') {
-        const deduct = Math.min(num, child.funds.available.balance || 0);
-        updatedFunds.available = {
-          balance: Math.max(0, (child.funds.available.balance || 0) - deduct)
-        };
-        logDesc = `משיכה מהארנק שלי (-${deduct} ₪)`;
-      } else if (fundKey === 'donation') {
-        const deduct = Math.min(num, child.funds.donation.balance || 0);
-        updatedFunds.donation = {
-          ...child.funds.donation,
-          balance: Math.max(0, (child.funds.donation.balance || 0) - deduct),
-          unlockDate: Date.now() + 90 * 24 * 60 * 60 * 1000
-        };
-        logDesc = `תרומה מקופת מעשים טובים (-${deduct} ₪)`;
-      } else if (fundKey === 'savings') {
-        // Withdrawing from savings transfers funds into "הארנק שלי"
-        const totalSav = (child.funds.savings.principal || 0) + (child.funds.savings.interest || 0);
-        const deduct = Math.min(num, totalSav);
-        const remaining = Math.max(0, totalSav - deduct);
-
-        // Deduct from interest first, then principal
-        const newInterest = Math.max(0, (child.funds.savings.interest || 0) - deduct);
-        const leftoverDeduct = Math.max(0, deduct - (child.funds.savings.interest || 0));
-        const newPrincipal = Math.max(0, (child.funds.savings.principal || 0) - leftoverDeduct);
-
-        updatedFunds.savings = {
-          ...child.funds.savings,
-          principal: remaining === 0 ? 0 : newPrincipal,
-          interest: remaining === 0 ? 0 : newInterest,
-          unlockDate: remaining === 0 ? Date.now() + 90 * 24 * 60 * 60 * 1000 : child.funds.savings.unlockDate
-        };
-        updatedFunds.available = {
-          balance: (child.funds.available.balance || 0) + deduct
-        };
-        logDesc = `העברה מקופת החלומות לארנק שלי (${deduct} ₪)`;
-      }
-
-      const historyEntry = {
-        id: Date.now().toString(),
-        date: dateStr,
-        type: fundKey === 'savings' ? 'transfer' : 'withdraw',
-        amount: -num,
-        description: logDesc
+          return {
+            ...prev,
+            children: {
+              ...prev.children,
+              [activeChildId]: {
+                ...child,
+                funds: updatedFunds,
+                history: [{ id: Date.now(), date: new Date().toLocaleDateString('he-IL'), text: logText }, ...child.history]
+              }
+            }
+          };
+        });
+        setWithdrawModal({ open: false, fundKey: 'available', amount: 0 });
       };
 
-      return {
-        ...prev,
-        children: {
-          ...prev.children,
-          [activeChildId]: {
-            ...child,
-            funds: updatedFunds,
-            history: [historyEntry, ...(child.history || [])].slice(0, 30)
-          }
-        }
-      };
-    });
+      const fmt = (n) => Number(n || 0).toLocaleString('he-IL', { maximumFractionDigits: 2 });
 
-    setWithdrawModal({ open: false, fundKey: 'available', amount: 0 });
-  };
+      return (
+        <div className="min-h-screen pb-12">
+          {/* Header */}
+          <header className="bg-white border-b border-slate-200 sticky top-0 z-20 shadow-sm">
+            <div className="max-w-4xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold text-xl shadow">₪</div>
+                <div>
+                  <h1 className="font-bold text-lg text-slate-900 leading-tight">הבנק המשפחתי</h1>
+                  <p className="text-xs text-slate-500">אביב ושקד • ניהול כסף כיס</p>
+                </div>
+              </div>
 
-  // Change parent PIN inside settings
-  const handleChangeParentPin = (e) => {
-    e.preventDefault();
-    const cleanedPin = newPinInput.trim();
-    if (cleanedPin.length < 4) return;
-    setData((prev) => ({
-      ...prev,
-      parentPin: cleanedPin
-    }));
-    setNewPinInput('');
-    setPinSavedMsg(true);
-    setTimeout(() => setPinSavedMsg(false), 2500);
-  };
-
-  // Full reset protected by security question
-  const handleFullProtectedReset = (e) => {
-    e.preventDefault();
-    const answer = resetStreetInput.trim();
-    if (answer !== 'הקליר' && answer !== 'רחוב הקליר') {
-      setResetErrorMsg('תשובה שגויה! נסו שוב');
-      return;
-    }
-    setData((prev) => ({
-      ...JSON.parse(JSON.stringify(INITIAL_DATA)),
-      parentPin: prev.parentPin || '2974',
-      activeChildId: prev.activeChildId || 'aviv'
-    }));
-    setResetStreetInput('');
-    setResetErrorMsg('');
-    setShowSettingsModal(false);
-  };
-
-  const splitSum =
-    (Number(distSplit.available) || 0) +
-    (Number(distSplit.savings) || 0) +
-    (Number(distSplit.donation) || 0);
-  const bucketTotal = activeChild.bucket?.currentAmount || 0;
-
-  return (
-    <div
-      dir="rtl"
-      className="h-[100dvh] w-full bg-slate-950 text-slate-100 flex justify-center overflow-hidden select-none font-sans"
-    >
-      <div className="w-full max-w-md h-full bg-slate-900/95 border-x border-slate-800/80 flex flex-col p-2.5 gap-2 overflow-hidden">
-        {/* TOP HEADER */}
-        <header className="flex items-center justify-between bg-slate-800/80 border border-slate-700/70 rounded-xl px-3 py-2 shrink-0">
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center text-slate-950 shadow">
-              <Coins className="w-4 h-4" />
-            </div>
-            <h1 className="text-sm font-black tracking-tight text-white">בנק המשפחה</h1>
-            <button
-              onClick={() => {
-                setSyncInput(familyCode);
-                setShowSyncModal(true);
-              }}
-              title={cloudConnected ? `מסונכרן לענן (${familyCode})` : 'מצב מקומי - לחץ להגדרת סנכרון'}
-              className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md border transition-all ${
-                cloudConnected
-                  ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
-                  : 'bg-slate-700/60 border-slate-600 text-slate-400'
-              }`}
-            >
-              {cloudConnected ? <Cloud className="w-3 h-3" /> : <CloudOff className="w-3 h-3" />}
-              <span>{cloudConnected ? 'מסונכרן' : 'מקומי'}</span>
-            </button>
-          </div>
-
-          <div className="flex items-center gap-1.5">
-            {isParentMode ? (
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={() => {
-                    setNewPinInput('');
-                    setPinSavedMsg(false);
-                    setResetStreetInput('');
-                    setResetErrorMsg('');
-                    setShowSettingsModal(true);
-                  }}
-                  title="הגדרות הורים"
-                  className="p-1.5 bg-slate-700/90 hover:bg-slate-600 text-slate-200 border border-slate-600 rounded-lg transition-all"
+                  onClick={() => { setSyncInput(familyCode); setShowSyncModal(true); }}
+                  className={`px-3 py-1.5 rounded-full text-xs font-medium flex items-center gap-1.5 border ${
+                    cloudConnected ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'
+                  }`}
                 >
-                  <Settings className="w-3.5 h-3.5" />
+                  <span className={`w-2 h-2 rounded-full ${cloudConnected ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
+                  {cloudConnected ? 'מסונכרן בענן' : 'מצב מקומי'}
                 </button>
-                <button
-                  onClick={() => setIsParentMode(false)}
-                  className="flex items-center gap-1 text-[11px] bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-2.5 py-1 rounded-lg transition-all shadow"
-                >
-                  <Users className="w-3 h-3" />
-                  <span>אזור ילדים</span>
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => setShowPinModal(true)}
-                className="flex items-center gap-1 text-[11px] bg-slate-700/80 hover:bg-slate-700 text-slate-300 font-medium px-2.5 py-1 rounded-lg border border-slate-600 transition-all"
-              >
-                <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
-                <span>אזור הורים</span>
-              </button>
-            )}
-          </div>
-        </header>
 
-        {/* CHILDREN SELECTOR TABS */}
-        <section className="grid grid-cols-2 gap-1.5 bg-slate-800/70 p-1 rounded-xl border border-slate-700/60 shrink-0">
-          {Object.entries(data.children || INITIAL_DATA.children).map(([childId, child]) => {
-            const isSelected = activeChildId === childId;
-            return (
-              <button
-                key={childId}
-                onClick={() => handleSelectChild(childId)}
-                className={`flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg font-extrabold text-xs transition-all ${
-                  isSelected
-                    ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/40'
-                }`}
-              >
-                <User className="w-3.5 h-3.5" />
-                <span>{child.name}</span>
-              </button>
-            );
-          })}
-        </section>
-
-        {/* MAIN CONTENT */}
-        <main className="flex-1 flex flex-col gap-2 min-h-0 overflow-hidden">
-          {!isParentMode ? (
-            /* KIDS VIEW: 4 SQUARE CARDS GRID (2x2) */
-            <section className="grid grid-cols-2 gap-2 shrink-0">
-              {/* SQUARE 1: WEEKLY BUCKET */}
-              <div className="bg-gradient-to-br from-slate-800 via-indigo-900/40 to-slate-800 border border-indigo-500/40 rounded-2xl p-2.5 shadow-lg flex flex-col justify-between items-center text-center aspect-[1/0.92]">
-                <div className="flex items-center gap-1 text-indigo-300 text-xs font-bold">
-                  <Coins className="w-3.5 h-3.5 shrink-0" />
-                  <span>מיכל שבועי</span>
-                </div>
-
-                <div className="my-auto">
-                  <span className="text-5xl font-black text-amber-400 leading-none tracking-tight">
-                    {activeChild.bucket?.currentAmount || 0} ₪
-                  </span>
-                </div>
-
-                <div>
-                  <span className="text-[11px] whitespace-nowrap bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-2.5 py-0.5 rounded-full font-bold inline-flex items-center gap-1">
-                    ממתין לחלוקה
-                  </span>
-                </div>
-              </div>
-
-              {/* SQUARE 2: AVAILABLE MONEY (הארנק שלי) */}
-              <div className="bg-slate-800/90 border border-slate-700/80 rounded-2xl p-2.5 shadow-lg flex flex-col justify-between items-center text-center aspect-[1/0.92]">
-                <div className="flex items-center gap-1 text-slate-200 text-xs font-bold">
-                  <Wallet className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                  <span>הארנק שלי 🛍️</span>
-                </div>
-
-                <div className="my-auto">
-                  <span className="text-5xl font-black text-amber-400 leading-none tracking-tight">
-                    {activeChild.funds?.available?.balance || 0} ₪
-                  </span>
-                </div>
-
-                <div>
-                  <span className="text-[11px] whitespace-nowrap bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-0.5 rounded-full font-bold inline-flex items-center gap-1">
-                    <Unlock className="w-3 h-3 shrink-0" /> זמין
-                  </span>
-                </div>
-              </div>
-
-              {/* SQUARE 3: LONG TERM SAVINGS (קופת החלומות) + RIGHT SIDE VERTICAL BAR */}
-              <div className="bg-slate-800/90 border border-indigo-500/40 rounded-2xl p-2.5 shadow-lg relative flex flex-col justify-between items-center text-center aspect-[1/0.92]">
-                <div
-                  className="absolute right-2 top-3 bottom-3 w-2 bg-slate-950 rounded-full overflow-hidden flex flex-col-reverse border border-slate-700/80"
-                  title={`קרן: ${principal} ₪ | ריבית: +${interest} ₪`}
-                >
-                  <div
-                    className="bg-indigo-500 w-full transition-all duration-500"
-                    style={{
-                      height:
-                        totalSavingsBalance > 0
-                          ? `${(principal / totalSavingsBalance) * 100}%`
-                          : '100%'
-                    }}
-                  />
-                  <div
-                    className="bg-emerald-400 w-full transition-all duration-500"
-                    style={{
-                      height:
-                        totalSavingsBalance > 0
-                          ? `${(interest / totalSavingsBalance) * 100}%`
-                          : '0%'
-                    }}
-                  />
-                </div>
-
-                <div className="flex items-center gap-1 text-slate-200 text-xs font-bold pr-2">
-                  <TrendingUp className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-                  <span>קופת החלומות 🚀</span>
-                </div>
-
-                <div className="my-auto pr-2 flex flex-col items-center">
-                  <span className="text-5xl font-black text-indigo-300 leading-none tracking-tight">
-                    {totalSavingsBalance} ₪
-                  </span>
-                  <div className="flex items-center gap-1.5 mt-1 text-[9px] font-bold">
-                    <span className="text-indigo-300">קרן {principal}</span>
-                    <span className="text-slate-600">|</span>
-                    <span className="text-emerald-400">ריבית +{interest}</span>
-                  </div>
-                </div>
-
-                <div className="pr-2">
-                  {isSavingsUnlocked ? (
-                    <span className="text-[11px] whitespace-nowrap bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-0.5 rounded-full font-bold inline-flex items-center gap-1">
-                      <Unlock className="w-3 h-3 shrink-0" /> פתוח
-                    </span>
-                  ) : (
-                    <span className="text-[11px] whitespace-nowrap bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2.5 py-0.5 rounded-full font-bold inline-flex items-center gap-1">
-                      <Lock className="w-3 h-3 shrink-0" /> {savingsDaysLeft} ימים
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* SQUARE 4: DONATION FUND (מעשים טובים) */}
-              <div className="bg-slate-800/90 border border-rose-500/30 rounded-2xl p-2.5 shadow-lg flex flex-col justify-between items-center text-center aspect-[1/0.92]">
-                <div className="flex items-center gap-1 text-slate-200 text-xs font-bold">
-                  <Heart className="w-3.5 h-3.5 text-rose-400 shrink-0" />
-                  <span>מעשים טובים 💖</span>
-                </div>
-
-                <div className="my-auto">
-                  <span className="text-5xl font-black text-rose-400 leading-none tracking-tight">
-                    {activeChild.funds?.donation?.balance || 0} ₪
-                  </span>
-                </div>
-
-                <div>
-                  {isDonationUnlocked ? (
-                    <span className="text-[11px] whitespace-nowrap bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-0.5 rounded-full font-bold inline-flex items-center gap-1">
-                      <Unlock className="w-3 h-3 shrink-0" /> פתוח
-                    </span>
-                  ) : (
-                    <span className="text-[11px] whitespace-nowrap bg-rose-500/20 text-rose-300 border border-rose-500/30 px-2.5 py-0.5 rounded-full font-bold inline-flex items-center gap-1">
-                      <Calendar className="w-3 h-3 shrink-0" /> {donationDaysLeft} ימים
-                    </span>
-                  )}
-                </div>
-              </div>
-            </section>
-          ) : (
-            /* PARENT VIEW: 4 SQUARE CARDS GRID (2x2) */
-            <section className="grid grid-cols-2 gap-2 shrink-0">
-              {/* SQUARE 1: WEEKLY BUCKET WITH ACTIONS */}
-              <div className="bg-gradient-to-br from-slate-800 via-indigo-900/40 to-slate-800 border border-indigo-500/50 rounded-2xl p-2 shadow-lg flex flex-col justify-between items-center text-center aspect-[1/0.92]">
-                <div className="flex items-center justify-between w-full px-1">
-                  <button
-                    onClick={() => openAdjModal('penalty')}
-                    className="p-1 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 rounded-lg"
-                    title="הפחתה"
-                  >
-                    <Minus className="w-3.5 h-3.5" />
-                  </button>
-                  <span className="text-indigo-300 text-xs font-bold">מיכל שבועי</span>
-                  <button
-                    onClick={() => openAdjModal('bonus')}
-                    className="p-1 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 rounded-lg"
-                    title="בונוס"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-
-                <div className="my-auto">
-                  <span className="text-5xl font-black text-amber-400 leading-none tracking-tight">
-                    {activeChild.bucket?.currentAmount || 0} ₪
-                  </span>
-                </div>
-
-                <button
-                  onClick={openDistModal}
-                  className="w-full py-1 px-2 bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold rounded-xl shadow flex items-center justify-center gap-1 transition-all"
-                >
-                  <ArrowUpRight className="w-3.5 h-3.5" />
-                  <span>העבר לקופות</span>
-                </button>
-              </div>
-
-              {/* SQUARE 2: AVAILABLE MONEY (הארנק שלי) */}
-              <div
-                onClick={() => openWithdrawModal('available')}
-                className="cursor-pointer bg-slate-800/90 hover:bg-slate-800 border border-slate-700 hover:border-amber-500/50 rounded-2xl p-2.5 shadow-lg flex flex-col justify-between items-center text-center aspect-[1/0.92] transition-all"
-              >
-                <div className="flex items-center gap-1 text-slate-200 text-xs font-bold">
-                  <Wallet className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                  <span>הארנק שלי 🛍️</span>
-                </div>
-
-                <div className="my-auto">
-                  <span className="text-5xl font-black text-amber-400 leading-none tracking-tight">
-                    {activeChild.funds?.available?.balance || 0} ₪
-                  </span>
-                </div>
-
-                <div>
-                  <span className="text-[11px] whitespace-nowrap bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-0.5 rounded-full font-bold inline-flex items-center gap-1">
-                    <Unlock className="w-3 h-3 shrink-0" /> זמין
-                  </span>
-                </div>
-              </div>
-
-              {/* SQUARE 3: LONG TERM SAVINGS (קופת החלומות) + RIGHT SIDE VERTICAL BAR */}
-              <div
-                onClick={() => openWithdrawModal('savings')}
-                className="cursor-pointer bg-slate-800/90 hover:bg-slate-800 border border-indigo-500/40 hover:border-indigo-400 rounded-2xl p-2.5 shadow-lg relative flex flex-col justify-between items-center text-center aspect-[1/0.92] transition-all"
-              >
-                <div
-                  className="absolute right-2 top-3 bottom-3 w-2 bg-slate-950 rounded-full overflow-hidden flex flex-col-reverse border border-slate-700/80"
-                  title={`קרן: ${principal} ₪ | ריבית: +${interest} ₪`}
-                >
-                  <div
-                    className="bg-indigo-500 w-full transition-all duration-500"
-                    style={{
-                      height:
-                        totalSavingsBalance > 0
-                          ? `${(principal / totalSavingsBalance) * 100}%`
-                          : '100%'
-                    }}
-                  />
-                  <div
-                    className="bg-emerald-400 w-full transition-all duration-500"
-                    style={{
-                      height:
-                        totalSavingsBalance > 0
-                          ? `${(interest / totalSavingsBalance) * 100}%`
-                          : '0%'
-                    }}
-                  />
-                </div>
-
-                <div className="flex items-center gap-1 text-slate-200 text-xs font-bold pr-2">
-                  <TrendingUp className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-                  <span>קופת החלומות 🚀</span>
-                </div>
-
-                <div className="my-auto pr-2 flex flex-col items-center">
-                  <span className="text-5xl font-black text-indigo-300 leading-none tracking-tight">
-                    {totalSavingsBalance} ₪
-                  </span>
-                  <div className="flex items-center gap-1.5 mt-1 text-[9px] font-bold">
-                    <span className="text-indigo-300">קרן {principal}</span>
-                    <span className="text-slate-600">|</span>
-                    <span className="text-emerald-400">ריבית +{interest}</span>
-                  </div>
-                </div>
-
-                <div className="pr-2">
-                  {isSavingsUnlocked ? (
-                    <span className="text-[11px] whitespace-nowrap bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-0.5 rounded-full font-bold inline-flex items-center gap-1">
-                      <Unlock className="w-3 h-3 shrink-0" /> פתוח
-                    </span>
-                  ) : (
-                    <span className="text-[11px] whitespace-nowrap bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2.5 py-0.5 rounded-full font-bold inline-flex items-center gap-1">
-                      <Lock className="w-3 h-3 shrink-0" /> {savingsDaysLeft} ימים
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* SQUARE 4: DONATION FUND (מעשים טובים) */}
-              <div
-                onClick={() => openWithdrawModal('donation')}
-                className="cursor-pointer bg-slate-800/90 hover:bg-slate-800 border border-rose-500/30 hover:border-rose-400/60 rounded-2xl p-2.5 shadow-lg flex flex-col justify-between items-center text-center aspect-[1/0.92] transition-all"
-              >
-                <div className="flex items-center gap-1 text-slate-200 text-xs font-bold">
-                  <Heart className="w-3.5 h-3.5 text-rose-400 shrink-0" />
-                  <span>מעשים טובים 💖</span>
-                </div>
-
-                <div className="my-auto">
-                  <span className="text-5xl font-black text-rose-400 leading-none tracking-tight">
-                    {activeChild.funds?.donation?.balance || 0} ₪
-                  </span>
-                </div>
-
-                <div>
-                  {isDonationUnlocked ? (
-                    <span className="text-[11px] whitespace-nowrap bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-0.5 rounded-full font-bold inline-flex items-center gap-1">
-                      <Unlock className="w-3 h-3 shrink-0" /> פתוח
-                    </span>
-                  ) : (
-                    <span className="text-[11px] whitespace-nowrap bg-rose-500/20 text-rose-300 border border-rose-500/30 px-2.5 py-0.5 rounded-full font-bold inline-flex items-center gap-1">
-                      <Calendar className="w-3 h-3 shrink-0" /> {donationDaysLeft} ימים
-                    </span>
-                  )}
-                </div>
-              </div>
-            </section>
-          )}
-
-          {/* ACTIVITY HISTORY LOG */}
-          <section className="flex-1 bg-slate-800/60 border border-slate-700/70 rounded-2xl p-2.5 flex flex-col min-h-0 overflow-hidden">
-            <div className="flex items-center justify-between mb-1.5 shrink-0">
-              <div className="flex items-center gap-1.5 text-xs font-bold text-slate-300">
-                <History className="w-3.5 h-3.5 text-indigo-400" />
-                <span>היסטוריית פעולות ({activeChild.name})</span>
-              </div>
-              <span className="text-[10px] text-slate-400">30 ימים אחרונים</span>
-            </div>
-
-            <div className="flex-1 overflow-y-auto space-y-1.5 pl-0.5">
-              {!activeChild.history || activeChild.history.length === 0 ? (
-                <div className="h-full flex items-center justify-center text-xs text-slate-500">
-                  אין פעולות מתועדות עדיין
-                </div>
-              ) : (
-                activeChild.history.map((item) => (
-                  <div
-                    key={item.id}
-                    className="flex items-center justify-between bg-slate-900/70 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs"
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-[10px] text-slate-500 shrink-0">{item.date}</span>
-                      <span className="text-slate-200 truncate">{item.description}</span>
-                    </div>
-                    <span
-                      className={`font-extrabold shrink-0 mr-2 ${
-                        item.amount > 0
-                          ? 'text-emerald-400'
-                          : item.amount < 0
-                          ? 'text-rose-400'
-                          : 'text-slate-300'
-                      }`}
+                {isParentMode ? (
+                  <>
+                    <button
+                      onClick={() => { setResetStreetInput(''); setResetErrorMsg(''); setShowSettingsModal(true); }}
+                      className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition"
+                      title="הגדרות הורים"
                     >
-                      {item.amount > 0 ? `+${item.amount}` : item.amount} ₪
-                    </span>
-                  </div>
-                ))
-              )}
+                      ⚙️
+                    </button>
+                    <button
+                      onClick={() => setIsParentMode(false)}
+                      className="px-3 py-1.5 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-800 text-xs font-semibold transition"
+                    >
+                      יציאה ממצב הורים
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => { setPinInput(''); setPinError(false); setShowPinModal(true); }}
+                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold transition"
+                  >
+                    🔒 כניסת הורים
+                  </button>
+                )}
+              </div>
+            </div>
+          </header>
+
+          {/* Child Selector */}
+          <section className="max-w-4xl mx-auto px-4 mt-5">
+            <div className="bg-white p-1.5 rounded-2xl border border-slate-200 shadow-sm grid grid-cols-2 gap-2">
+              {['aviv', 'shaked'].map((cid) => {
+                const c = data.children[cid];
+                const isSelected = activeChildId === cid;
+                return (
+                  <button
+                    key={cid}
+                    onClick={() => handleSelectChild(cid)}
+                    className={`py-2.5 px-4 rounded-xl font-bold text-base transition flex items-center justify-center gap-2 ${
+                      isSelected ? 'bg-indigo-600 text-white shadow' : 'text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    <span>{c.name}</span>
+                  </button>
+                );
+              })}
             </div>
           </section>
-        </main>
-      </div>
 
-      {/* PARENT PIN MODAL */}
-      {showPinModal && (
-        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <form
-            onSubmit={handlePinSubmit}
-            className="bg-slate-900 border border-slate-700 rounded-2xl p-5 w-full max-w-xs space-y-4 shadow-2xl"
-          >
-            <div className="flex items-center justify-between">
-              <h3 className="font-bold text-base text-white flex items-center gap-1.5">
-                <ShieldCheck className="w-4 h-4 text-amber-400" />
-                <span>כניסת הורים</span>
-              </h3>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowPinModal(false);
-                  setPinError(false);
-                  setPinInput('');
-                }}
-                className="text-slate-400 hover:text-white"
-              >
-                <X className="w-4 h-4" />
-              </button>
+          {/* Main 2x2 Grid */}
+          <main className="max-w-4xl mx-auto px-4 mt-5 space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Square 1: Weekly Bucket */}
+              <div className="bg-white rounded-2xl border-2 border-indigo-100 p-5 shadow-sm flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold uppercase tracking-wide text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-lg">
+                      1. קופת השבוע הנוכחי
+                    </span>
+                    <span className="text-xs text-slate-400">בסיס: {activeChild.bucket.baseAmount} ₪</span>
+                  </div>
+                  <div className="text-4xl font-extrabold text-slate-900 my-2">
+                    {fmt(activeChild.bucket.currentAmount)} <span className="text-xl font-bold text-slate-500">₪</span>
+                  </div>
+                  {activeChild.bucket.adjustments.length > 0 && (
+                    <div className="mt-2 space-y-1 max-h-20 overflow-y-auto text-xs">
+                      {activeChild.bucket.adjustments.map((adj) => (
+                        <div key={adj.id} className="flex justify-between bg-slate-50 px-2 py-1 rounded">
+                          <span className="text-slate-600">{adj.reason}</span>
+                          <span className={adj.delta >= 0 ? 'text-emerald-600 font-bold' : 'text-rose-600 font-bold'}>
+                            {adj.delta > 0 ? `+${adj.delta}` : adj.delta} ₪
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {isParentMode ? (
+                  <div className="mt-4 pt-3 border-t border-slate-100 space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => openAdjustmentModal('bonus')}
+                        className="py-2 px-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-semibold text-xs transition"
+                      >
+                        + בונוס
+                      </button>
+                      <button
+                        onClick={() => openAdjustmentModal('deduction')}
+                        className="py-2 px-3 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold text-xs transition"
+                      >
+                        - הפחתה
+                      </button>
+                    </div>
+                    <button
+                      onClick={openDistributeModal}
+                      className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm shadow transition"
+                    >
+                      חלק לקופות השבוע ←
+                    </button>
+                  </div>
+                ) : (
+                  <p className="mt-4 text-xs text-slate-400">מחכה לחלוקה השבועית של אבא ואמא</p>
+                )}
+              </div>
+
+              {/* Square 2: Available Fund */}
+              <div className="bg-white rounded-2xl border-2 border-emerald-100 p-5 shadow-sm flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg">
+                      2. זמין מיידית (50%)
+                    </span>
+                    <span className="text-xs text-emerald-600 font-medium">נזיל בכל רגע</span>
+                  </div>
+                  <div className="text-4xl font-extrabold text-emerald-700 my-2">
+                    {fmt(activeChild.funds.available.balance)} <span className="text-xl font-bold">₪</span>
+                  </div>
+                  <p className="text-xs text-slate-500">כסף חופשי לבזבוזים קטנים וקניות שוטפות.</p>
+                </div>
+
+                {isParentMode && (
+                  <div className="mt-4 pt-3 border-t border-slate-100">
+                    <button
+                      disabled={activeChild.funds.available.balance <= 0}
+                      onClick={() => setWithdrawModal({ open: true, fundKey: 'available', amount: activeChild.funds.available.balance })}
+                      className="w-full py-2 px-3 rounded-xl bg-emerald-600 disabled:bg-slate-200 disabled:text-slate-400 hover:bg-emerald-700 text-white font-semibold text-xs transition"
+                    >
+                      משיכת כסף זמין
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Square 3: Savings Fund with Principal vs Interest Bar */}
+              <div className="bg-white rounded-2xl border-2 border-blue-100 p-5 shadow-sm flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-blue-700 bg-blue-50 px-2.5 py-1 rounded-lg">
+                      3. קופת החלומות (40%)
+                    </span>
+                    <span className="text-xs text-blue-600 font-medium">
+                      {isSavingsUnlocked ? '🔓 פתוח למשיכה' : `🔒 עוד ${savingsDaysLeft} ימים`}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-4 my-2">
+                    <div>
+                      <div className="text-4xl font-extrabold text-blue-700">
+                        {fmt(totalSavingsBalance)} <span className="text-xl font-bold">₪</span>
+                      </div>
+                      <div className="mt-2 space-y-0.5 text-xs">
+                        <div className="text-slate-600">קרן שהופקדה: <strong className="text-blue-700">{fmt(principal)} ₪</strong></div>
+                        <div className="text-slate-600">רווח מריבית (8%): <strong className="text-amber-600">+{fmt(interest)} ₪</strong></div>
+                      </div>
+                    </div>
+
+                    {/* Vertical Bar on the Left/Side showing Principal vs Interest */}
+                    <div className="flex flex-col items-center">
+                      <div className="w-6 h-20 bg-slate-100 rounded-lg overflow-hidden flex flex-col-reverse border border-slate-200">
+                        {totalSavingsBalance > 0 && (
+                          <>
+                            <div
+                              style={{ height: `${(principal / totalSavingsBalance) * 100}%` }}
+                              className="bg-blue-500 w-full transition-all"
+                              title={`קרן: ${fmt(principal)} ₪`}
+                            />
+                            <div
+                              style={{ height: `${(interest / totalSavingsBalance) * 100}%` }}
+                              className="bg-amber-400 w-full transition-all"
+                              title={`ריבית: ${fmt(interest)} ₪`}
+                            />
+                          </>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-slate-400 mt-1">קרן/ריבית</span>
+                    </div>
+                  </div>
+                </div>
+
+                {isParentMode ? (
+                  <div className="mt-4 pt-3 border-t border-slate-100">
+                    <button
+                      disabled={totalSavingsBalance <= 0}
+                      onClick={() => setWithdrawModal({ open: true, fundKey: 'savings', amount: totalSavingsBalance })}
+                      className={`w-full py-2 px-3 rounded-xl font-semibold text-xs transition ${
+                        totalSavingsBalance <= 0
+                          ? 'bg-slate-200 text-slate-400'
+                          : isSavingsUnlocked
+                          ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                          : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200'
+                      }`}
+                    >
+                      {isSavingsUnlocked ? 'משיכת חיסכון מלאה' : 'שבירת חיסכון מוקדמת (איבוד ריבית)'}
+                    </button>
+                  </div>
+                ) : (
+                  <p className="mt-3 text-[11px] text-slate-400">ריבית דריבית 8% בכל חלוקה שבועית. שבירה מוקדמת מאפסת את הריבית.</p>
+                )}
+              </div>
+
+              {/* Square 4: Good Deeds / Donation Fund */}
+              <div className="bg-white rounded-2xl border-2 border-purple-100 p-5 shadow-sm flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-purple-700 bg-purple-50 px-2.5 py-1 rounded-lg">
+                      4. מעשים טובים / תרומה (10%)
+                    </span>
+                    <span className="text-xs text-purple-600 font-medium">
+                      {isDonationUnlocked ? '🔓 מוכן לתרומה' : `עוד ${donationDaysLeft} ימים`}
+                    </span>
+                  </div>
+                  <div className="text-4xl font-extrabold text-purple-700 my-2">
+                    {fmt(activeChild.funds.donation.balance)} <span className="text-xl font-bold">₪</span>
+                  </div>
+                  <p className="text-xs text-slate-500">נאסף בצד לבחירת יעד תרומה משותף פעם ברבעון.</p>
+                </div>
+
+                {isParentMode && (
+                  <div className="mt-4 pt-3 border-t border-slate-100">
+                    <button
+                      disabled={activeChild.funds.donation.balance <= 0}
+                      onClick={() => setWithdrawModal({ open: true, fundKey: 'donation', amount: activeChild.funds.donation.balance })}
+                      className="w-full py-2 px-3 rounded-xl bg-purple-600 disabled:bg-slate-200 disabled:text-slate-400 hover:bg-purple-700 text-white font-semibold text-xs transition"
+                    >
+                      משיכה לביצוע תרומה
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div>
-              <input
-                type="password"
-                inputMode="numeric"
-                maxLength={6}
-                autoFocus
-                value={pinInput}
-                onChange={(e) => {
-                  setPinInput(e.target.value);
-                  setPinError(false);
-                }}
-                placeholder="קוד הורים"
-                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-center text-lg tracking-widest font-bold text-white focus:outline-none focus:border-indigo-500"
-              />
-              {pinError && (
-                <p className="text-rose-400 text-xs mt-1.5 text-center font-medium">
-                  קוד שגוי, נסו שוב
-                </p>
+            {/* History Log */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+              <h3 className="font-bold text-sm text-slate-700 mb-3">היסטוריית פעולות אחרונות ({activeChild.name})</h3>
+              {activeChild.history.length === 0 ? (
+                <p className="text-xs text-slate-400">עדיין לא נרשמו פעולות.</p>
+              ) : (
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {activeChild.history.map((item) => (
+                    <div key={item.id} className="flex items-center justify-between text-xs py-1.5 border-b border-slate-100 last:border-0">
+                      <span className="text-slate-700">{item.text}</span>
+                      <span className="text-slate-400 shrink-0 mr-2">{item.date}</span>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
+          </main>
 
-            <button
-              type="submit"
-              className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-sm transition-all"
-            >
-              כניסה
-            </button>
-          </form>
-        </div>
-      )}
-
-      {/* BONUS / PENALTY MODAL */}
-      {adjModal.open && (
-        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <form
-            onSubmit={handleAddAdjustment}
-            className="bg-slate-900 border border-slate-700 rounded-2xl p-5 w-full max-w-xs space-y-4 shadow-2xl"
-          >
-            <div className="flex items-center justify-between">
-              <h3 className="font-bold text-base text-white">
-                {adjModal.type === 'bonus' ? 'הוספת בונוס למיכל' : 'הפחתה מהמיכל'}
-              </h3>
-              <button
-                type="button"
-                onClick={() => setAdjModal({ open: false, type: 'bonus' })}
-                className="text-slate-400 hover:text-white"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs text-slate-300 block mb-1">סכום בשקלים</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="200"
-                  value={adjAmount}
-                  onChange={(e) => setAdjAmount(e.target.value)}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white font-bold text-center text-lg"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs text-slate-300 block mb-1">סיבה (אופציונלי)</label>
-                <input
-                  type="text"
-                  value={adjReason}
-                  onChange={(e) => setAdjReason(e.target.value)}
-                  placeholder={adjModal.type === 'bonus' ? 'לדוגמה: עזרה בבית' : 'לדוגמה: אי עמידה בזמנים'}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white"
-                />
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              className={`w-full py-2.5 font-bold rounded-xl text-sm text-white transition-all ${
-                adjModal.type === 'bonus'
-                  ? 'bg-emerald-600 hover:bg-emerald-500'
-                  : 'bg-rose-600 hover:bg-rose-500'
-              }`}
-            >
-              אישור ועדכון
-            </button>
-          </form>
-        </div>
-      )}
-
-      {/* DISTRIBUTE BUCKET MODAL */}
-      {distModalOpen && (
-        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <form
-            onSubmit={handleConfirmDistribution}
-            className="bg-slate-900 border border-slate-700 rounded-2xl p-5 w-full max-w-xs space-y-4 shadow-2xl"
-          >
-            <div className="flex items-center justify-between">
-              <h3 className="font-bold text-base text-white">חלוקת מיכל ({bucketTotal} ₪)</h3>
-              <button
-                type="button"
-                onClick={() => setDistModalOpen(false)}
-                className="text-slate-400 hover:text-white"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-2.5 text-sm">
-              <div className="flex items-center justify-between bg-slate-800 p-2.5 rounded-xl">
-                <span className="font-bold text-amber-400">הארנק שלי 🛍️</span>
-                <input
-                  type="number"
-                  min="0"
-                  max={bucketTotal}
-                  value={distSplit.available}
-                  onChange={(e) =>
-                    setDistSplit({ ...distSplit, available: Number(e.target.value) || 0 })
-                  }
-                  className="w-20 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-center font-bold text-white"
-                />
-              </div>
-
-              <div className="flex items-center justify-between bg-slate-800 p-2.5 rounded-xl">
-                <span className="font-bold text-indigo-300">קופת החלומות 🚀</span>
-                <input
-                  type="number"
-                  min="0"
-                  max={bucketTotal}
-                  value={distSplit.savings}
-                  onChange={(e) =>
-                    setDistSplit({ ...distSplit, savings: Number(e.target.value) || 0 })
-                  }
-                  className="w-20 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-center font-bold text-white"
-                />
-              </div>
-
-              <div className="flex items-center justify-between bg-slate-800 p-2.5 rounded-xl">
-                <span className="font-bold text-rose-400">מעשים טובים 💖</span>
-                <input
-                  type="number"
-                  min="0"
-                  max={bucketTotal}
-                  value={distSplit.donation}
-                  onChange={(e) =>
-                    setDistSplit({ ...distSplit, donation: Number(e.target.value) || 0 })
-                  }
-                  className="w-20 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-center font-bold text-white"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between text-xs px-1">
-              <span className="text-slate-400">סה״כ מחולק:</span>
-              <span
-                className={`font-bold ${
-                  splitSum === bucketTotal ? 'text-emerald-400' : 'text-rose-400'
-                }`}
-              >
-                {splitSum} / {bucketTotal} ₪
-              </span>
-            </div>
-
-            <button
-              type="submit"
-              disabled={splitSum !== bucketTotal}
-              className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-700 disabled:text-slate-500 text-white font-bold rounded-xl text-sm flex items-center justify-center gap-1.5 transition-all"
-            >
-              <Check className="w-4 h-4" />
-              <span>אישור והעברה לקופות</span>
-            </button>
-          </form>
-        </div>
-      )}
-
-      {/* WITHDRAW / TRANSFER CONFIRMATION MODAL */}
-      {withdrawModal.open && (
-        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <form
-            onSubmit={handleConfirmWithdraw}
-            className="bg-slate-900 border border-slate-700 rounded-2xl p-5 w-full max-w-xs space-y-4 shadow-2xl"
-          >
-            <div className="flex items-center justify-between">
-              <h3 className="font-bold text-base text-white">האם למשוך עכשיו?</h3>
-              <button
-                type="button"
-                onClick={() => setWithdrawModal({ open: false, fundKey: 'available', amount: 0 })}
-                className="text-slate-400 hover:text-white"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <p className="text-xs text-slate-300">
-              {withdrawModal.fundKey === 'savings'
-                ? 'משיכה מקופת החלומות תעביר את הסכום ישירות לתוך "הארנק שלי".'
-                : withdrawModal.fundKey === 'donation'
-                ? 'אישור פעולה זו יאפס/יפחית את הסכום מקופת מעשים טובים לצורך תרומה.'
-                : 'אישור פעולה זו יפחית את הסכום מיתרת "הארנק שלי".'}
-            </p>
-
-            <div>
-              <label className="text-xs text-slate-400 block mb-1">סכום למשיכה (₪)</label>
-              <input
-                type="number"
-                min="0"
-                value={withdrawModal.amount}
-                onChange={(e) =>
-                  setWithdrawModal({ ...withdrawModal, amount: Number(e.target.value) || 0 })
-                }
-                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-center text-xl font-black text-white"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setWithdrawModal({ open: false, fundKey: 'available', amount: 0 })}
-                className="py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-xs"
-              >
-                ביטול
-              </button>
-              <button
-                type="submit"
-                className="py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs"
-              >
-                אישור
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* FAMILY SYNC CODE MODAL */}
-      {showSyncModal && (
-        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <form
-            onSubmit={handleSaveFamilyCode}
-            className="bg-slate-900 border border-slate-700 rounded-2xl p-5 w-full max-w-xs space-y-4 shadow-2xl"
-          >
-            <div className="flex items-center justify-between">
-              <h3 className="font-bold text-base text-white flex items-center gap-1.5">
-                <Cloud className="w-4 h-4 text-emerald-400" />
-                <span>סנכרון בין מכשירים</span>
-              </h3>
-              <button
-                type="button"
-                onClick={() => setShowSyncModal(false)}
-                className="text-slate-400 hover:text-white"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <p className="text-xs text-slate-300 leading-relaxed">
-              הזינו את אותו <strong>קוד משפחה</strong> בטלפונים של ההורים והילדים כדי שכל היתרות והפעולות יסתנכרנו בזמן אמת:
-            </p>
-
-            <div>
-              <label className="text-xs text-slate-400 block mb-1">קוד משפחה משותף</label>
-              <input
-                type="text"
-                dir="ltr"
-                value={syncInput}
-                onChange={(e) => setSyncInput(e.target.value)}
-                placeholder="לדוגמה: family-2026"
-                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-center font-bold text-white text-sm"
-              />
-            </div>
-
-            <button
-              type="submit"
-              className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-sm transition-all"
-            >
-              חיבור וסנכרון
-            </button>
-          </form>
-        </div>
-      )}
-
-      {/* PARENT SETTINGS MODAL */}
-      {showSettingsModal && (
-        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-5 w-full max-w-xs space-y-5 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="font-bold text-base text-white flex items-center gap-1.5">
-                <Settings className="w-4 h-4 text-amber-400" />
-                <span>הגדרות הורים</span>
-              </h3>
-              <button
-                type="button"
-                onClick={() => setShowSettingsModal(false)}
-                className="text-slate-400 hover:text-white"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleChangeParentPin} className="space-y-2.5">
-              <label className="text-xs font-bold text-slate-300 block">
-                שינוי סיסמת הורים (לפחות 4 ספרות)
-              </label>
-              <div className="flex gap-2">
+          {/* PIN Modal */}
+          {showPinModal && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+              <form onSubmit={handlePinSubmit} className="bg-white rounded-2xl p-6 max-w-xs w-full shadow-xl space-y-4">
+                <h3 className="font-bold text-lg text-slate-900">כניסת הורים</h3>
                 <input
                   type="password"
                   inputMode="numeric"
-                  maxLength={6}
-                  value={newPinInput}
-                  onChange={(e) => setNewPinInput(e.target.value)}
-                  placeholder="סיסמה חדשה"
-                  className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-center font-bold text-white text-sm tracking-widest"
+                  autoFocus
+                  value={pinInput}
+                  onChange={(e) => setPinInput(e.target.value)}
+                  placeholder="הזן סיסמה"
+                  className="w-full border border-slate-300 rounded-xl px-4 py-2.5 text-center text-lg tracking-widest"
                 />
-                <button
-                  type="submit"
-                  disabled={newPinInput.trim().length < 4}
-                  className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 text-white font-bold rounded-xl text-xs transition-all"
-                >
-                  שמור
-                </button>
-              </div>
-              {pinSavedMsg && (
-                <p className="text-emerald-400 text-[11px] font-bold">הסיסמה עודכנה בהצלחה!</p>
-              )}
-            </form>
+                {pinError && <p className="text-xs text-rose-600 text-center">סיסמה שגויה</p>}
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setShowPinModal(false)} className="flex-1 py-2 rounded-xl bg-slate-100 text-slate-700 text-sm font-semibold">ביטול</button>
+                  <button type="submit" className="flex-1 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold">כניסה</button>
+                </div>
+              </form>
+            </div>
+          )}
 
-            <form
-              onSubmit={handleFullProtectedReset}
-              className="space-y-2.5 pt-3 border-t border-slate-800"
-            >
-              <div className="flex items-center gap-1.5 text-rose-400 font-bold text-xs">
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>איפוס מלא של כל נתוני הקופות</span>
-              </div>
-              <p className="text-[11px] text-slate-300 leading-relaxed">
-                כדי למנוע איפוס בטעות, ענו על השאלה:{' '}
-                <strong>באיזה רחוב אמא ואבא גרו בתל אביב?</strong>
-              </p>
-              <input
-                type="text"
-                value={resetStreetInput}
-                onChange={(e) => {
-                  setResetStreetInput(e.target.value);
-                  setResetErrorMsg('');
-                }}
-                placeholder="הקלידו את שם הרחוב..."
-                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white"
-              />
-              {resetErrorMsg && (
-                <p className="text-rose-400 text-[11px] font-medium">{resetErrorMsg}</p>
-              )}
-              <button
-                type="submit"
-                className="w-full py-2.5 bg-rose-600/90 hover:bg-rose-600 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>אפס את כל הנתונים</span>
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+          {/* Sync Modal */}
+          {showSyncModal && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+              <form onSubmit={handleSaveFamilyCode} className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl space-y-4">
+                <h3 className="font-bold text-lg text-slate-900">קוד סנכרון משפחתי</h3>
+                <p className="text-xs text-slate-500">הזינו את אותו קוד בכל המכשירים בבית כדי לסנכרן נתונים בזמן אמת.</p>
+                <input
+                  type="text"
+                  value={syncInput}
+                  onChange={(e) => setSyncInput(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm text-left"
+                  dir="ltr"
+                />
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setShowSyncModal(false)} className="flex-1 py-2 rounded-xl bg-slate-100 text-slate-700 text-sm font-semibold">סגור</button>
+                  <button type="submit" className="flex-1 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold">שמור קוד</button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* Parent Settings Modal */}
+          {showSettingsModal && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-xl space-y-5">
+                <div
