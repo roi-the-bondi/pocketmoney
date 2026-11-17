@@ -670,4 +670,245 @@
               {activeChild.history.length === 0 ? (
                 <p className="text-xs text-slate-400">עדיין לא נרשמו פעולות.</p>
               ) : (
-                <div className="space-y-2 max-h-48
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {activeChild.history.map((item) => (
+                    <div key={item.id} className="flex items-center justify-between text-xs py-1.5 border-b border-slate-100 last:border-0">
+                      <span className="text-slate-700">{item.text}</span>
+                      <span className="text-slate-400 shrink-0 mr-2">{item.date}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </main>
+
+          {/* PIN Modal */}
+          {showPinModal && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+              <form onSubmit={handlePinSubmit} className="bg-white rounded-2xl p-6 max-w-xs w-full shadow-xl space-y-4">
+                <h3 className="font-bold text-lg text-slate-900">כניסת הורים</h3>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  autoFocus
+                  value={pinInput}
+                  onChange={(e) => setPinInput(e.target.value)}
+                  placeholder="הזן סיסמה"
+                  className="w-full border border-slate-300 rounded-xl px-4 py-2.5 text-center text-lg tracking-widest"
+                />
+                {pinError && <p className="text-xs text-rose-600 text-center">סיסמה שגויה</p>}
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setShowPinModal(false)} className="flex-1 py-2 rounded-xl bg-slate-100 text-slate-700 text-sm font-semibold">ביטול</button>
+                  <button type="submit" className="flex-1 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold">כניסה</button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* Sync Modal */}
+          {showSyncModal && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+              <form onSubmit={handleSaveFamilyCode} className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl space-y-4">
+                <h3 className="font-bold text-lg text-slate-900">קוד סנכרון משפחתי</h3>
+                <p className="text-xs text-slate-500">הזינו את אותו קוד בכל המכשירים בבית כדי לסנכרן נתונים בזמן אמת.</p>
+                <input
+                  type="text"
+                  value={syncInput}
+                  onChange={(e) => setSyncInput(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm text-left"
+                  dir="ltr"
+                />
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setShowSyncModal(false)} className="flex-1 py-2 rounded-xl bg-slate-100 text-slate-700 text-sm font-semibold">סגור</button>
+                  <button type="submit" className="flex-1 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold">שמור קוד</button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* Settings Modal */}
+          {showSettingsModal && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-xl space-y-5">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-bold text-lg text-slate-900">⚙️ הגדרות הורים</h3>
+                  <button onClick={() => setShowSettingsModal(false)} className="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+                </div>
+
+                <form onSubmit={handleChangePin} className="space-y-2 border-b border-slate-100 pb-4">
+                  <label className="block text-xs font-bold text-slate-700">שינוי סיסמת הורים</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={newPinInput}
+                      onChange={(e) => setNewPinInput(e.target.value)}
+                      placeholder="סיסמה חדשה"
+                      className="flex-1 border border-slate-300 rounded-xl px-3 py-2 text-sm"
+                    />
+                    <button type="submit" className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-semibold">עדכן</button>
+                  </div>
+                  {pinSavedMsg && <p className="text-xs text-emerald-600 font-medium">הסיסמה עודכנה בהצלחה!</p>}
+                </form>
+
+                <form onSubmit={handleSecureReset} className="space-y-2">
+                  <label className="block text-xs font-bold text-rose-700">איפוס מלא של כל הנתונים (אביב ושקד)</label>
+                  <p className="text-xs text-slate-600">לאישור איפוס הקופות, ענו על שאלת האבטחה:<br/><strong>באיזה רחוב אמא ואבא גרו בתל אביב?</strong></p>
+                  <input
+                    type="text"
+                    value={resetStreetInput}
+                    onChange={(e) => { setResetStreetInput(e.target.value); setResetErrorMsg(''); }}
+                    placeholder="הקלד את שם הרחוב..."
+                    className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm"
+                  />
+                  {resetErrorMsg && <p className="text-xs text-rose-600">{resetErrorMsg}</p>}
+                  <button type="submit" className="w-full py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold">
+                    אפס את כל הקופות
+                  </button>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* Bonus / Deduction Modal */}
+          {adjModal.open && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+              <form onSubmit={handleAddAdjustment} className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl space-y-4">
+                <h3 className="font-bold text-lg text-slate-900">
+                  {adjModal.type === 'bonus' ? 'הוספת בונוס' : 'הפחתה מהקופה השבועית'}
+                </h3>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">סכום (₪)</label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="0.5"
+                    value={adjAmount}
+                    onChange={(e) => setAdjAmount(e.target.value)}
+                    className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">סיבה</label>
+                  <input
+                    type="text"
+                    value={adjReason}
+                    onChange={(e) => setAdjReason(e.target.value)}
+                    placeholder={adjModal.type === 'bonus' ? 'לדוגמה: עזרה בבית' : 'לדוגמה: התנהגות לא נעימה'}
+                    className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setAdjModal({ open: false, type: 'bonus' })} className="flex-1 py-2 rounded-xl bg-slate-100 text-slate-700 text-sm font-semibold">ביטול</button>
+                  <button type="submit" className="flex-1 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold">אישור</button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* Distribution Modal */}
+          {distModalOpen && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+              <form onSubmit={handleDistribute} className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl space-y-4">
+                <h3 className="font-bold text-lg text-slate-900">חלוקה לקופות ({fmt(activeChild.bucket.currentAmount)} ₪)</h3>
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between items-center">
+                    <span>זמין מיידית:</span>
+                    <input type="number" step="0.5" value={distSplit.available} onChange={(e) => setDistSplit({ ...distSplit, available: +e.target.value })} className="w-24 border rounded-lg px-2 py-1 text-left" />
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span>קופת החלומות (+8% ריבית על היתרה):</span>
+                    <input type="number" step="0.5" value={distSplit.savings} onChange={(e) => setDistSplit({ ...distSplit, savings: +e.target.value })} className="w-24 border rounded-lg px-2 py-1 text-left" />
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span>מעשים טובים (תרומה):</span>
+                    <input type="number" step="0.5" value={distSplit.donation} onChange={(e) => setDistSplit({ ...distSplit, donation: +e.target.value })} className="w-24 border rounded-lg px-2 py-1 text-left" />
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setDistModalOpen(false)} className="flex-1 py-2 rounded-xl bg-slate-100 text-slate-700 text-sm font-semibold">ביטול</button>
+                  <button type="submit" className="flex-1 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold">בצע חלוקה</button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* Withdraw Modal (Custom Amount) */}
+          {withdrawModal.open && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+              <form onSubmit={handleConfirmWithdraw} className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-bold text-lg text-slate-900">משיכת כסף</h3>
+                  <span className="text-xs text-slate-500">יתרה זמינה: <strong>{fmt(withdrawModal.maxAmount)} ₪</strong></span>
+                </div>
+
+                {withdrawModal.fundKey === 'savings' && !isSavingsUnlocked ? (
+                  <p className="text-xs text-amber-800 bg-amber-50 p-3 rounded-xl">
+                    החיסכון עדיין נעול. שבירת חיסכון תחזיר את כל הקרן (<strong>{fmt(principal)} ₪</strong>) ותבטל את הריבית (<strong>{fmt(interest)} ₪</strong>).
+                  </p>
+                ) : (
+                  <>
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">סכום למשיכה (₪)</label>
+                      <div className="flex gap-2">
+                        <input
+                          type="number"
+                          step="0.5"
+                          min="0.5"
+                          max={withdrawModal.maxAmount}
+                          autoFocus
+                          required
+                          value={withdrawInput}
+                          onChange={(e) => { setWithdrawInput(e.target.value); setWithdrawError(''); }}
+                          placeholder="הזן סכום..."
+                          className="flex-1 border border-slate-300 rounded-xl px-3 py-2 text-base font-bold"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => { setWithdrawInput(String(withdrawModal.maxAmount)); setWithdrawError(''); }}
+                          className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold"
+                        >
+                          הכל
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">מטרת המשיכה (אופציונלי)</label>
+                      <input
+                        type="text"
+                        value={withdrawReason}
+                        onChange={(e) => setWithdrawReason(e.target.value)}
+                        placeholder="לדוגמה: גלידה, קלפים, תרומה..."
+                        className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm"
+                      />
+                    </div>
+                  </>
+                )}
+
+                {withdrawError && <p className="text-xs text-rose-600">{withdrawError}</p>}
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setWithdrawModal({ open: false, fundKey: 'available', maxAmount: 0 })}
+                    className="flex-1 py-2 rounded-xl bg-slate-100 text-slate-700 text-sm font-semibold"
+                  >
+                    ביטול
+                  </button>
+                  <button type="submit" className="flex-1 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold">
+                    אשר משיכה
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
