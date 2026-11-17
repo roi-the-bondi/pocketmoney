@@ -100,7 +100,10 @@
       const [distModalOpen, setDistModalOpen] = useState(false);
       const [distSplit, setDistSplit] = useState({ available: 12.5, savings: 10, donation: 2.5 });
 
-      const [withdrawModal, setWithdrawModal] = useState({ open: false, fundKey: 'available', amount: 0 });
+      const [withdrawModal, setWithdrawModal] = useState({ open: false, fundKey: 'available', maxAmount: 0 });
+      const [withdrawInput, setWithdrawInput] = useState('');
+      const [withdrawReason, setWithdrawReason] = useState('');
+      const [withdrawError, setWithdrawError] = useState('');
 
       const [showSettingsModal, setShowSettingsModal] = useState(false);
       const [newPinInput, setNewPinInput] = useState('');
@@ -334,26 +337,62 @@
         setDistModalOpen(false);
       };
 
-      const handleConfirmWithdraw = () => {
-        const { fundKey } = withdrawModal;
+      const openWithdrawModal = (fundKey, maxAmount) => {
+        setWithdrawModal({ open: true, fundKey, maxAmount });
+        setWithdrawInput(fundKey === 'savings' && !isSavingsUnlocked ? String(maxAmount) : '');
+        setWithdrawReason('');
+        setWithdrawError('');
+      };
+
+      const handleConfirmWithdraw = (e) => {
+        if (e) e.preventDefault();
+        const { fundKey, maxAmount } = withdrawModal;
+        const isLockedSavings = fundKey === 'savings' && !isSavingsUnlocked;
+        const requested = isLockedSavings ? maxAmount : parseFloat(withdrawInput);
+
+        if (isNaN(requested) || requested <= 0) {
+          setWithdrawError('יש להזין סכום תקין גדול מ-0.');
+          return;
+        }
+        if (requested > maxAmount + 0.001) {
+          setWithdrawError(`הסכום חורג מהיתרה הקיימת (${fmt(maxAmount)} ₪).`);
+          return;
+        }
+
+        const note = withdrawReason.trim() ? ` (${withdrawReason.trim()})` : '';
+
         setData((prev) => {
           const child = prev.children[activeChildId];
           const updatedFunds = { ...child.funds };
           let logText = '';
 
           if (fundKey === 'available') {
-            logText = `משיכה מהקופה הזמינה: ${child.funds.available.balance} ₪`;
-            updatedFunds.available = { balance: 0 };
+            const remaining = Math.max(0, +(child.funds.available.balance - requested).toFixed(2));
+            logText = `משיכה מהארנק הזמין: ${fmt(requested)} ₪${note} (נותר: ${fmt(remaining)} ₪)`;
+            updatedFunds.available = { balance: remaining };
           } else if (fundKey === 'savings') {
             if (isSavingsUnlocked) {
-              logText = `משיכת חיסכון מלאה (קרן + ריבית): ${totalSavingsBalance} ₪`;
+              const total = child.funds.savings.principal + child.funds.savings.interest;
+              const remainingTotal = Math.max(0, +(total - requested).toFixed(2));
+              const ratio = total > 0 ? remainingTotal / total : 0;
+              logText = `משיכה מקופת החלומות: ${fmt(requested)} ₪${note} (נותר: ${fmt(remainingTotal)} ₪)`;
+              updatedFunds.savings = {
+                ...child.funds.savings,
+                principal: +(child.funds.savings.principal * ratio).toFixed(2),
+                interest: +(child.funds.savings.interest * ratio).toFixed(2),
+                unlockDate: remainingTotal === 0 ? Date.now() + 90 * 24 * 60 * 60 * 1000 : child.funds.savings.unlockDate
+              };
             } else {
-              logText = `שבירת חיסכון מוקדמת: נמשכו ${principal} ₪ קרן (בוטלו ${interest} ₪ ריבית)`;
+              logText = `שבירת חיסכון מוקדמת: נמשכו ${fmt(principal)} ₪ קרן (בוטלו ${fmt(interest)} ₪ ריבית)`;
+              updatedFunds.savings = { principal: 0, interest: 0, unlockDate: Date.now() + 90 * 24 * 60 * 60 * 1000 };
             }
-            updatedFunds.savings = { principal: 0, interest: 0, unlockDate: Date.now() + 90 * 24 * 60 * 60 * 1000 };
           } else if (fundKey === 'donation') {
-            logText = `משיכה מקופת תרומה: ${child.funds.donation.balance} ₪`;
-            updatedFunds.donation = { balance: 0, unlockDate: Date.now() + 90 * 24 * 60 * 60 * 1000 };
+            const remaining = Math.max(0, +(child.funds.donation.balance - requested).toFixed(2));
+            logText = `משיכה מקופת תרומה: ${fmt(requested)} ₪${note} (נותר: ${fmt(remaining)} ₪)`;
+            updatedFunds.donation = {
+              balance: remaining,
+              unlockDate: remaining === 0 ? Date.now() + 90 * 24 * 60 * 60 * 1000 : child.funds.donation.unlockDate
+            };
           }
 
           return {
@@ -368,7 +407,7 @@
             }
           };
         });
-        setWithdrawModal({ open: false, fundKey: 'available', amount: 0 });
+        setWithdrawModal({ open: false, fundKey: 'available', maxAmount: 0 });
       };
 
       const fmt = (n) => Number(n || 0).toLocaleString('he-IL', { maximumFractionDigits: 2 });
@@ -446,6 +485,7 @@
 
           <main className="max-w-4xl mx-auto px-4 mt-5 space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Square 1: Weekly Bucket */}
               <div className="bg-white rounded-2xl border-2 border-indigo-100 p-5 shadow-sm flex flex-col justify-between">
                 <div>
                   <div className="flex items-center justify-between mb-2">
@@ -499,6 +539,7 @@
                 )}
               </div>
 
+              {/* Square 2: Available Wallet */}
               <div className="bg-white rounded-2xl border-2 border-emerald-100 p-5 shadow-sm flex flex-col justify-between">
                 <div>
                   <div className="flex items-center justify-between mb-2">
@@ -517,15 +558,16 @@
                   <div className="mt-4 pt-3 border-t border-slate-100">
                     <button
                       disabled={activeChild.funds.available.balance <= 0}
-                      onClick={() => setWithdrawModal({ open: true, fundKey: 'available', amount: activeChild.funds.available.balance })}
+                      onClick={() => openWithdrawModal('available', activeChild.funds.available.balance)}
                       className="w-full py-2 px-3 rounded-xl bg-emerald-600 disabled:bg-slate-200 disabled:text-slate-400 hover:bg-emerald-700 text-white font-semibold text-xs transition"
                     >
-                      משיכת כסף זמין
+                      משיכה מהארנק
                     </button>
                   </div>
                 )}
               </div>
 
+              {/* Square 3: Savings Fund */}
               <div className="bg-white rounded-2xl border-2 border-blue-100 p-5 shadow-sm flex flex-col justify-between">
                 <div>
                   <div className="flex items-center justify-between mb-2">
@@ -574,7 +616,7 @@
                   <div className="mt-4 pt-3 border-t border-slate-100">
                     <button
                       disabled={totalSavingsBalance <= 0}
-                      onClick={() => setWithdrawModal({ open: true, fundKey: 'savings', amount: totalSavingsBalance })}
+                      onClick={() => openWithdrawModal('savings', totalSavingsBalance)}
                       className={`w-full py-2 px-3 rounded-xl font-semibold text-xs transition ${
                         totalSavingsBalance <= 0
                           ? 'bg-slate-200 text-slate-400'
@@ -583,7 +625,7 @@
                           : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200'
                       }`}
                     >
-                      {isSavingsUnlocked ? 'משיכת חיסכון מלאה' : 'שבירת חיסכון מוקדמת (איבוד ריבית)'}
+                      {isSavingsUnlocked ? 'משיכה מקופת החלומות' : 'שבירת חיסכון מוקדמת (איבוד ריבית)'}
                     </button>
                   </div>
                 ) : (
@@ -591,6 +633,7 @@
                 )}
               </div>
 
+              {/* Square 4: Good Deeds / Donation */}
               <div className="bg-white rounded-2xl border-2 border-purple-100 p-5 shadow-sm flex flex-col justify-between">
                 <div>
                   <div className="flex items-center justify-between mb-2">
@@ -611,7 +654,7 @@
                   <div className="mt-4 pt-3 border-t border-slate-100">
                     <button
                       disabled={activeChild.funds.donation.balance <= 0}
-                      onClick={() => setWithdrawModal({ open: true, fundKey: 'donation', amount: activeChild.funds.donation.balance })}
+                      onClick={() => openWithdrawModal('donation', activeChild.funds.donation.balance)}
                       className="w-full py-2 px-3 rounded-xl bg-purple-600 disabled:bg-slate-200 disabled:text-slate-400 hover:bg-purple-700 text-white font-semibold text-xs transition"
                     >
                       משיכה לביצוע תרומה
@@ -621,193 +664,10 @@
               </div>
             </div>
 
+            {/* History Log */}
             <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
               <h3 className="font-bold text-sm text-slate-700 mb-3">היסטוריית פעולות אחרונות ({activeChild.name})</h3>
               {activeChild.history.length === 0 ? (
                 <p className="text-xs text-slate-400">עדיין לא נרשמו פעולות.</p>
               ) : (
-                <div className="space-y-2 max-h-48 overflow-y-auto">
-                  {activeChild.history.map((item) => (
-                    <div key={item.id} className="flex items-center justify-between text-xs py-1.5 border-b border-slate-100 last:border-0">
-                      <span className="text-slate-700">{item.text}</span>
-                      <span className="text-slate-400 shrink-0 mr-2">{item.date}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </main>
-
-          {showPinModal && (
-            <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-              <form onSubmit={handlePinSubmit} className="bg-white rounded-2xl p-6 max-w-xs w-full shadow-xl space-y-4">
-                <h3 className="font-bold text-lg text-slate-900">כניסת הורים</h3>
-                <input
-                  type="password"
-                  inputMode="numeric"
-                  autoFocus
-                  value={pinInput}
-                  onChange={(e) => setPinInput(e.target.value)}
-                  placeholder="הזן סיסמה"
-                  className="w-full border border-slate-300 rounded-xl px-4 py-2.5 text-center text-lg tracking-widest"
-                />
-                {pinError && <p className="text-xs text-rose-600 text-center">סיסמה שגויה</p>}
-                <div className="flex gap-2">
-                  <button type="button" onClick={() => setShowPinModal(false)} className="flex-1 py-2 rounded-xl bg-slate-100 text-slate-700 text-sm font-semibold">ביטול</button>
-                  <button type="submit" className="flex-1 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold">כניסה</button>
-                </div>
-              </form>
-            </div>
-          )}
-
-          {showSyncModal && (
-            <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-              <form onSubmit={handleSaveFamilyCode} className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl space-y-4">
-                <h3 className="font-bold text-lg text-slate-900">קוד סנכרון משפחתי</h3>
-                <p className="text-xs text-slate-500">הזינו את אותו קוד בכל המכשירים בבית כדי לסנכרן נתונים בזמן אמת.</p>
-                <input
-                  type="text"
-                  value={syncInput}
-                  onChange={(e) => setSyncInput(e.target.value)}
-                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm text-left"
-                  dir="ltr"
-                />
-                <div className="flex gap-2">
-                  <button type="button" onClick={() => setShowSyncModal(false)} className="flex-1 py-2 rounded-xl bg-slate-100 text-slate-700 text-sm font-semibold">סגור</button>
-                  <button type="submit" className="flex-1 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold">שמור קוד</button>
-                </div>
-              </form>
-            </div>
-          )}
-
-          {showSettingsModal && (
-            <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-              <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-xl space-y-5">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-bold text-lg text-slate-900">⚙️ הגדרות הורים</h3>
-                  <button onClick={() => setShowSettingsModal(false)} className="text-slate-400 hover:text-slate-600 text-lg">✕</button>
-                </div>
-
-                <form onSubmit={handleChangePin} className="space-y-2 border-b border-slate-100 pb-4">
-                  <label className="block text-xs font-bold text-slate-700">שינוי סיסמת הורים</label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      value={newPinInput}
-                      onChange={(e) => setNewPinInput(e.target.value)}
-                      placeholder="סיסמה חדשה"
-                      className="flex-1 border border-slate-300 rounded-xl px-3 py-2 text-sm"
-                    />
-                    <button type="submit" className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-semibold">עדכן</button>
-                  </div>
-                  {pinSavedMsg && <p className="text-xs text-emerald-600 font-medium">הסיסמה עודכנה בהצלחה!</p>}
-                </form>
-
-                <form onSubmit={handleSecureReset} className="space-y-2">
-                  <label className="block text-xs font-bold text-rose-700">איפוס מלא של כל הנתונים (אביב ושקד)</label>
-                  <p className="text-xs text-slate-600">לאישור איפוס הקופות, ענו על שאלת האבטחה:<br/><strong>באיזה רחוב אמא ואבא גרו בתל אביב?</strong></p>
-                  <input
-                    type="text"
-                    value={resetStreetInput}
-                    onChange={(e) => { setResetStreetInput(e.target.value); setResetErrorMsg(''); }}
-                    placeholder="הקלד את שם הרחוב..."
-                    className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm"
-                  />
-                  {resetErrorMsg && <p className="text-xs text-rose-600">{resetErrorMsg}</p>}
-                  <button type="submit" className="w-full py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold">
-                    אפס את כל הקופות
-                  </button>
-                </form>
-              </div>
-            </div>
-          )}
-
-          {adjModal.open && (
-            <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-              <form onSubmit={handleAddAdjustment} className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl space-y-4">
-                <h3 className="font-bold text-lg text-slate-900">
-                  {adjModal.type === 'bonus' ? 'הוספת בונוס' : 'הפחתה מהקופה השבועית'}
-                </h3>
-                <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">סכום (₪)</label>
-                  <input
-                    type="number"
-                    step="0.5"
-                    min="0.5"
-                    value={adjAmount}
-                    onChange={(e) => setAdjAmount(e.target.value)}
-                    className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">סיבה</label>
-                  <input
-                    type="text"
-                    value={adjReason}
-                    onChange={(e) => setAdjReason(e.target.value)}
-                    placeholder={adjModal.type === 'bonus' ? 'לדוגמה: עזרה בבית' : 'לדוגמה: התנהגות לא נעימה'}
-                    className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm"
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <button type="button" onClick={() => setAdjModal({ open: false, type: 'bonus' })} className="flex-1 py-2 rounded-xl bg-slate-100 text-slate-700 text-sm font-semibold">ביטול</button>
-                  <button type="submit" className="flex-1 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold">אישור</button>
-                </div>
-              </form>
-            </div>
-          )}
-
-          {distModalOpen && (
-            <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-              <form onSubmit={handleDistribute} className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl space-y-4">
-                <h3 className="font-bold text-lg text-slate-900">חלוקה לקופות ({fmt(activeChild.bucket.currentAmount)} ₪)</h3>
-                <div className="space-y-2 text-xs">
-                  <div className="flex justify-between items-center">
-                    <span>זמין מיידית:</span>
-                    <input type="number" step="0.5" value={distSplit.available} onChange={(e) => setDistSplit({ ...distSplit, available: +e.target.value })} className="w-24 border rounded-lg px-2 py-1 text-left" />
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span>קופת החלומות (+8% ריבית על היתרה):</span>
-                    <input type="number" step="0.5" value={distSplit.savings} onChange={(e) => setDistSplit({ ...distSplit, savings: +e.target.value })} className="w-24 border rounded-lg px-2 py-1 text-left" />
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span>מעשים טובים (תרומה):</span>
-                    <input type="number" step="0.5" value={distSplit.donation} onChange={(e) => setDistSplit({ ...distSplit, donation: +e.target.value })} className="w-24 border rounded-lg px-2 py-1 text-left" />
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  <button type="button" onClick={() => setDistModalOpen(false)} className="flex-1 py-2 rounded-xl bg-slate-100 text-slate-700 text-sm font-semibold">ביטול</button>
-                  <button type="submit" className="flex-1 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold">בצע חלוקה</button>
-                </div>
-              </form>
-            </div>
-          )}
-
-          {withdrawModal.open && (
-            <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-              <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl space-y-4">
-                <h3 className="font-bold text-lg text-slate-900">אישור משיכה</h3>
-                {withdrawModal.fundKey === 'savings' && !isSavingsUnlocked ? (
-                  <p className="text-xs text-amber-800 bg-amber-50 p-3 rounded-xl">
-                    שים לב! החיסכון עדיין נעול. משיכה כעת תחזיר רק את הקרן (<strong>{fmt(principal)} ₪</strong>) ותבטל את כל הריבית שנצברה (<strong>{fmt(interest)} ₪</strong>).
-                  </p>
-                ) : (
-                  <p className="text-xs text-slate-600">האם לאשר משיכה של <strong>{fmt(withdrawModal.amount)} ₪</strong>?</p>
-                )}
-                <div className="flex gap-2">
-                  <button onClick={() => setWithdrawModal({ open: false, fundKey: 'available', amount: 0 })} className="flex-1 py-2 rounded-xl bg-slate-100 text-slate-700 text-sm font-semibold">ביטול</button>
-                  <button onClick={handleConfirmWithdraw} className="flex-1 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold">אשר משיכה</button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      );
-    }
-
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
-  </script>
-</body>
-</html>
+                <div className="space-y-2 max-h-48
